@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>程式碼編輯工具v1.1.2</title>
+  <style>
+    :root{
+      --bg:#0f172a;         /* slate-900 */
+      --panel:#111827;      /* gray-900 */
+      --text:#e5e7eb;       /* gray-200 */
+      --muted:#94a3b8;      /* slate-400 */
+      --accent:#22d3ee;     /* cyan-400 */
+      --border:#1f2937;     /* gray-800 */
+      --btn:#334155;        /* slate-700 */
+      --btn-hover:#3f4a62;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg); color:var(--text); font:14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      display:flex; flex-direction:column; gap:8px;
+    }
+    header{
+      display:flex; gap:8px; align-items:center; padding:10px 12px; background:var(--panel); border-bottom:1px solid var(--border);
+      position:sticky; top:0; z-index:10;
+    }
+    header .title{font-weight:700; letter-spacing: .3px}
+    header .spacer{flex:1}
+    .toolbar input[type="text"]{
+      width:220px; background:#0b1220; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px;
+    }
+    
+    /* 搜尋輸入 + 內嵌清除鍵 */
+.toolbar .search-wrap{
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.toolbar .search-wrap input{
+  width:220px;
+  background:#0b1220;
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:6px 28px 6px 8px; /* 右邊留空給 × */
+}
+/* 內嵌 × 鈕（預設隱形，輸入有內容才顯示） */
+.toolbar .clear-btn{
+  position:absolute;
+  right:6px;
+  height:22px;
+  width:22px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:#1a2337;
+  color:#cbd5e1;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:700;
+  line-height:1;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s ease, background .15s ease;
+}
+.toolbar .clear-btn:hover{ background:#263249; }
+.toolbar .search-wrap.has-value .clear-btn{
+  opacity:1;
+  pointer-events:auto;
+}
+       
+    .toolbar button, .toolbar label{
+      background:var(--btn); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:8px; cursor:pointer;
+    }
+    .toolbar button:hover{background:var(--btn-hover)}
+    .toolbar .count{color:var(--muted); margin-left:6px; min-width:70px; display:inline-block}
+    main{
+  flex:1;
+  min-height:0;
+  display:flex;
+  gap:8px;             /* 稍微拉開間距，讓中間有呼吸感 */
+  padding:0 16px 16px;  /* 增加內距，視覺更舒服 */
+  overflow:hidden;       /* 🚫 關鍵：防止出現中間捲軸 */
+}
+    .pane{flex:1; min-width:0; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--panel)}
+    .pane h3{margin:0; padding:8px 10px; border-bottom:1px solid var(--border); color:var(--muted); font-weight:600}
+    .editor-wrap{flex:1; position:relative; display:flex; min-height:0}
+    .gutter{
+      width:48px; background:#0b1220; color:var(--muted); text-align:right; padding:8px 6px; overflow:hidden auto; border-right:1px solid var(--border);
+      user-select:none; white-space:pre; line-height:1.4;
+    }
+    textarea{
+      flex:1; border:0; outline:0; resize:none; background:#0b1220; color:var(--text); padding:8px 10px; line-height:1.4; font-family:inherit; font-size:14px;
+      overflow:auto;
+    }
+
+.gutter {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.gutter::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+    iframe{
+      flex:1; border:0; background:#fff; min-height:0;
+    }
+    .statusbar{
+      display:flex; align-items:center; gap:12px; padding:6px 10px; border-top:1px solid var(--border); color:var(--muted); font-size:12px;
+    }
+    .badge{padding:2px 6px; border-radius:999px; background:#0b1220; border:1px solid var(--border); color:var(--muted)}
+    @media (max-width: 900px){
+      main{flex-direction:column}
+    }
+
+#editorContainer, #previewContainer {
+  transition: all 0.3s ease;
+}
+
+.pane h3 { 
+  position: relative; 
+  padding: 8px 140px 8px 10px; /* 右側留空給按鈕 */
+  margin: 0;
+  border-bottom:1px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pane h3 .heading-actions{
+  position: absolute;
+  right: 10px;
+  top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.pane h3 .heading-actions button{
+  background: #2b2b2b;
+  color: #ccc;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.pane h3 .heading-actions button:hover{
+  background:#3a3a3a; color:#fff;
+}
+
+/* 平滑動畫（你已經有 #editorContainer, #previewContainer 的 transition，可保留） */
+
+/* 檔名顯示 chip */
+.file-chip{
+  margin-left:8px;
+  padding:2px 8px;
+  border:1px solid var(--border);
+  border-radius:999px;
+  background:#0b1220;
+  color:var(--muted);
+  max-width:45%;
+  display:inline-block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  vertical-align:middle;
+  font-size:12px;
+}
+
+  </style>
+</head>
+<body>
+  <header>
+    <span class="title">程式碼編輯工具v1.1.2</span>
+    <span class="spacer"></span>
+    <div class="toolbar">
+      <label title="自動更新預覽">
+        <input id="autoRefresh" type="checkbox" checked /> 自動刷新
+      </label>
+      <button id="runBtn" title="執行（Ctrl/Cmd + Enter）">執行</button>
+<button id="openTabBtn">開新分頁預覽</button>
+      <div class="search-wrap">
+        <input id="findInput" type="search" placeholder="搜尋關鍵字（Ctrl/Cmd + F）"/>
+        <button id="clearSearchBtn" class="clear-btn" title="清除搜尋（Esc）" aria-label="清除搜尋">×</button>
+      </div>
+      <button id="prevBtn" title="上一個（Shift+Enter）">上一個</button>
+      <button id="nextBtn" title="下一個（Enter）">下一個</button>
+      <span class="count" id="matchCount">0 / 0</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="pane" id="editorContainer">
+  <h3>程式碼
+<span id="currentFile" class="file-chip" title="未載入檔案">未載入檔案</span>    
+<span class="heading-actions">
+      <button id="loadHtmlBtn" title="載入本機 HTML">載入</button>
+      <button id="copyCodeBtn" title="複製全部">複製</button>
+      <button id="clearCodeBtn" title="清除全部">清除</button>
+      <button id="exportCodeBtn" title="匯出為 HTML">匯出</button>
+    </span>
+  </h3>
+<!-- 隱藏的檔案選擇器（接受 .html / .htm）-->
+<input id="filePicker" type="file" accept=".html,.htm,text/html" style="display:none">
+
+<div class="editor-wrap">
+  <div id="gutter" class="gutter"></div>
+  <textarea id="editor" spellcheck="false"></textarea>
+</div>
+
+      <div class="statusbar">
+        <span class="badge">行 <span id="curLine">1</span> 列 <span id="curCol">1</span></span>
+        <span class="badge">字數 <span id="charCount">0</span></span>
+        <span class="badge">自動刷新：<span id="autoState">ON</span></span>
+        <span style="margin-left:auto;color:#7dd3fc">提示：Ctrl/Cmd+Enter 執行 · Ctrl/Cmd+F 搜尋</span>
+      </div>
+    </section>
+
+    <section class="pane" id="previewContainer">
+  <h3>預覽
+    <span class="heading-actions">
+      <button id="collapsePreviewBtn" title="收合/展開預覽">收合</button>
+    </span>
+  </h3>
+  <iframe id="preview" sandbox="allow-scripts allow-same-origin"></iframe>
+      <div class="statusbar">
+        <span class="badge">沙箱啟用</span>
+        <span class="badge">同源隔離</span>
+        <span class="badge">安全預覽</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // --- UI 元件參考 ---
+    const editor = document.getElementById('editor');
+    const gutter = document.getElementById('gutter');
+    const iframe = document.getElementById('preview');
+    const runBtn = document.getElementById('runBtn');
+    const autoRefresh = document.getElementById('autoRefresh');
+    const autoState = document.getElementById('autoState');
+    const curLineEl = document.getElementById('curLine');
+    const curColEl = document.getElementById('curCol');
+    const charCountEl = document.getElementById('charCount');
+    const findInput = document.getElementById('findInput');
+    const nextBtn = document.getElementById('nextBtn');
+    const prevBtn = document.getElementById('prevBtn');
+    const matchCount = document.getElementById('matchCount');
+    const clearSearchBtn = document.getElementById('clearSearchBtn'); // ← 新增
+
+// 檔名 chip
+const currentFile = document.getElementById('currentFile');
+function setCurrentFile(name){
+  if (!currentFile) return;
+  currentFile.textContent = name || '未載入檔案';
+  currentFile.title = name || '未載入檔案';
+}
+
+// 載入本機 HTML 用
+const loadHtmlBtn = document.getElementById('loadHtmlBtn');
+const filePicker   = document.getElementById('filePicker');
+
+    // --- 初始模板（第一次使用時提供示範內容） ---
+    const demo = `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>我的預覽頁</title>
+  <style>
+    body{font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "PingFang TC", "Segoe UI Emoji", sans-serif; margin:0; padding:32px}
+    h1{margin:0 0 12px}
+    .card{padding:16px 20px; border:1px solid #e5e7eb; border-radius:12px; background:#fafafa}
+    .btn{padding:8px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#111827; color:#fff; cursor:pointer}
+  </style>
+</head>
+<body>
+  <h1>👋 Hello，即時預覽成功！</h1>
+  <p>這是一個離線可用的最小版工具：把你的 HTML/CSS/JS 貼到這裡，右側會即時呈現。</p>
+  <div class="card">
+    <p>試試按下按鈕看 console：<button class="btn" onclick="console.log('Hello Console!'); alert('Hi!');">點我</button></p>
+  </div>
+  <script>
+    // 這裡可以寫你的 JavaScript
+    const now = new Date().toLocaleString();
+    console.log('現在時間：', now);
+  <\/script>
+</body>
+</html>`;
+    editor.value = demo;
+
+    // --- 行號更新 ---
+    function updateGutter(){
+      const lines = editor.value.split('\n').length;
+      let s = '';
+      for(let i=1;i<=lines;i++) s += i + '\n';
+      gutter.textContent = s || '1';
+    }
+
+    // --- 游標位置 & 字數 ---
+    function updateCursorInfo(){
+      const pos = editor.selectionStart;
+      const content = editor.value;
+      let line = 1, col = 1;
+      for(let i=0;i<pos;i++){
+        if(content[i]==='\n'){ line++; col=1; } else { col++; }
+      }
+      curLineEl.textContent = line;
+      curColEl.textContent = col;
+      charCountEl.textContent = content.length;
+    }
+
+    // --- 捲動同步（行號與編輯區） ---
+    editor.addEventListener('scroll', () => { gutter.scrollTop = editor.scrollTop; });
+
+    // --- 自動刷新（debounce） ---
+    let debounceTimer = null;
+    function requestPreview(){
+      if(!autoRefresh.checked) return;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(renderPreview, 250);
+    }
+
+    // --- 安全預覽：使用 iframe.srcdoc + sandbox(allow-scripts) ---
+    function renderPreview(){
+      const code = editor.value;
+      // 內嵌 Content-Security-Policy：阻擋外部資源載入（最小安全守則）
+      const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">`;
+      const html = code.replace(/<head>/i, `<head>${csp}`);
+      iframe.srcdoc = html;
+    }
+function openPreviewInNewTab() {
+  const iframe = document.getElementById('preview');
+  if (!iframe) {
+    alert('找不到預覽畫面 (iframe#preview)');
+    return;
+  }
+
+  const doc = iframe.contentDocument || iframe.contentWindow.document;
+  if (!doc) {
+    alert('無法讀取預覽內容');
+    return;
+  }
+
+  const html = '<!doctype html>\n' + doc.documentElement.outerHTML;
+
+  const newWin = window.open('', '_blank');
+  if (!newWin) {
+    alert('瀏覽器阻擋了彈出視窗，請允許本頁開啟新分頁。');
+    return;
+  }
+  newWin.document.open();
+  newWin.document.write(html);
+  newWin.document.close();
+}
+
+    // --- 搜尋功能（下一個/上一個） ---
+    let lastQuery = '';
+    let matches = [];
+    let idx = -1;
+
+    function computeMatches(q){
+      matches = [];
+      idx = -1;
+      if(!q) { matchCount.textContent = '0 / 0'; return; }
+      const text = editor.value;
+      let start = 0;
+      while(true){
+        const i = text.indexOf(q, start);
+        if(i === -1) break;
+        matches.push([i, i+q.length]);
+        start = i + q.length;
+      }
+      matchCount.textContent = matches.length ? `1 / ${matches.length}` : `0 / 0`;
+      updateNavButtons();                  // ← 新增
+    }
+
+    function jump(to){
+      if(!matches.length) return;
+      if(to==='next'){
+        idx = (idx + 1) % matches.length;
+      }else{
+        idx = (idx - 1 + matches.length) % matches.length;
+      }
+      const [s, e] = matches[idx];
+      editor.focus();
+      editor.setSelectionRange(s, e);
+      // 確保選取範圍在視口內
+      const before = editor.value.substring(0, s);
+      const line = before.split('\n').length;
+      const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 18;
+      const targetScroll = Math.max(0, (line - 3) * lineHeight);
+      editor.scrollTop = targetScroll;
+      gutter.scrollTop = editor.scrollTop;
+      matchCount.textContent = (idx+1) + ' / ' + matches.length;
+      updateCursorInfo();
+    }
+
+    function updateNavButtons(){
+  const enabled = matches && matches.length > 0;
+  prevBtn.disabled = !enabled;
+  nextBtn.disabled = !enabled;
+}
+
+function clearSearch(){
+  // 清空輸入與狀態
+  findInput.value = '';
+  lastQuery = '';
+  matches = [];
+  idx = -1;
+  matchCount.textContent = '0 / 0';
+  updateNavButtons();
+
+  // 清除編輯器選取（取消上次跳轉的高亮）
+  const pos = editor.selectionEnd;
+  editor.setSelectionRange(pos, pos);
+
+  // 焦點回到搜尋框
+  findInput.focus();
+
+  // UI：移除 has-value 樣式
+  findInput.parentElement?.classList.remove('has-value');
+}
+
+
+    // --- 事件繫結 ---
+    editor.addEventListener('input', ()=>{ updateGutter(); updateCursorInfo(); requestPreview(); });
+    editor.addEventListener('keyup', updateCursorInfo);
+    runBtn.addEventListener('click', renderPreview);
+
+// === 工具列：新分頁預覽（你已經有了，可保留） ===
+document.getElementById('openTabBtn').addEventListener('click', openPreviewInNewTab);
+
+// === 標題「程式碼」右側：複製/清除/匯出 ===
+document.getElementById('copyCodeBtn').addEventListener('click', () => {
+  navigator.clipboard.writeText(editor.value)
+    .then(()=>alert('✅ 已複製全部程式碼！'))
+    .catch(()=>alert('❌ 複製失敗，請檢查瀏覽器權限'));
+});
+
+document.getElementById('clearCodeBtn').addEventListener('click', () => {
+  if (confirm('確定要清除所有程式碼嗎？')) {
+    editor.value = '';
+    updateGutter();
+    updateCursorInfo();
+    renderPreview();
+// ★ 重點：清空後把檔名 chip 恢復為「未命名」，並重設視窗標題（可選）
+    setCurrentFile('未命名');                 // ← 這行會把 <span id="currentFile"> 顯示成「未命名」
+    document.title = '程式碼編輯工具v1.1.2';   // ← 可選：把分頁標題也重設
+  }
+});
+
+document.getElementById('exportCodeBtn').addEventListener('click', () => {
+  const blob = new Blob([editor.value], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+a.download = `code-${ts}.html`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// === 標題「程式碼」右側：載入本機 HTML ===
+if (loadHtmlBtn && filePicker) {
+  loadHtmlBtn.addEventListener('click', () => {
+    filePicker.value = ''; // 讓同一檔案可重選也會觸發 change
+    filePicker.click();
+  });
+
+  filePicker.addEventListener('change', () => {
+    const file = filePicker.files && filePicker.files[0];
+    if (!file) return;
+
+    // 覆寫提醒（避免誤覆蓋 demo 或現有內容）
+    const hasContent = editor.value.trim().length > 0 && editor.value !== demo;
+    if (hasContent && !confirm(`要以「${file.name}」內容覆蓋目前編輯區嗎？`)) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      editor.value = reader.result || '';
+      updateGutter();
+      updateCursorInfo();
+      renderPreview();
+      // 更新視窗標題顯示目前檔名（可選）
+      document.title = `程式碼編輯工具v1.0 - ${file.name}`;
+
+reader.onload = () => {
+  editor.value = reader.result || '';
+  updateGutter();
+  updateCursorInfo();
+  renderPreview();
+
+  // 更新標題與檔名 chip
+  setCurrentFile(file.name);
+  document.title = `程式碼編輯工具v1.1.2 - ${file.name}`;
+};
+
+    };
+    reader.onerror = () => {
+      alert('讀取檔案失敗，請再試一次。');
+    };
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+// === 標題「預覽」右側：收合/展開（只隱藏內容，保留標題列） ===
+let previewCollapsed = false;
+document.getElementById('collapsePreviewBtn').addEventListener('click', () => {
+  const editorContainer = document.getElementById('editorContainer');
+  const previewContainer = document.getElementById('previewContainer');
+  const iframeEl = document.getElementById('preview');
+  const statusbar = previewContainer.querySelector('.statusbar');
+  const btn = document.getElementById('collapsePreviewBtn');
+
+  previewCollapsed = !previewCollapsed;
+
+  if (previewCollapsed) {
+    // 隱藏內容
+    iframeEl.style.display = 'none';
+    if (statusbar) statusbar.style.display = 'none';
+
+    // 左欄吃滿
+    editorContainer.style.width = '100%';
+
+    // 右欄保持僅標題列
+    previewContainer.style.flex = '0 0 auto';
+    previewContainer.style.width = 'auto';
+
+    // 按鈕文案
+    btn.textContent = '展開';
+    btn.title = '展開預覽視窗';
+  } else {
+    // 顯示內容
+    iframeEl.style.display = '';
+    if (statusbar) statusbar.style.display = '';
+
+    // 回到 1:1 佈局
+    editorContainer.style.width = '50%';
+    previewContainer.style.flex = '';
+    previewContainer.style.width = '';
+
+    // 按鈕文案
+    btn.textContent = '收合';
+    btn.title = '收合預覽視窗';
+  }
+});
+
+    autoRefresh.addEventListener('change', ()=>{ autoState.textContent = autoRefresh.checked ? 'ON' : 'OFF'; if(autoRefresh.checked) renderPreview(); });
+
+    findInput.addEventListener('input', ()=>{
+      const q = findInput.value;
+      lastQuery = q;
+      computeMatches(q);
+      // 切換有無內容的樣式（控制 × 顯示）
+      findInput.parentElement?.classList.toggle('has-value', q.length > 0);
+    });
+    nextBtn.addEventListener('click', ()=> jump('next'));
+    prevBtn.addEventListener('click', ()=> jump('prev'));
+
+    // 快捷鍵：Ctrl/Cmd+Enter 執行、Ctrl/Cmd+F 聚焦搜尋、Enter/Shift+Enter 遍歷結果
+    window.addEventListener('keydown', (e)=>{
+      const meta = e.ctrlKey || e.metaKey;
+      if(meta && e.key === 'Enter'){ e.preventDefault(); renderPreview(); }
+
+// Ctrl/Cmd + O → 開啟載入檔案
+if (meta && e.key.toLowerCase() === 'o') {
+  e.preventDefault();
+  if (filePicker) {
+    filePicker.value = '';
+    filePicker.click();
+  }
+}
+
+// 全域快捷鍵：Ctrl/Cmd + Shift + Enter → 新分頁預覽
+if (meta && e.shiftKey && e.key === 'Enter') {
+  e.preventDefault();
+  openPreviewInNewTab();
+}
+      if(meta && (e.key.toLowerCase() === 'f')){ e.preventDefault(); findInput.focus(); findInput.select(); }
+      if(document.activeElement === findInput){
+  if(e.key === 'Enter'){ 
+    e.preventDefault(); 
+    if(e.shiftKey) jump('prev'); else jump('next'); 
+  }
+  if(e.key === 'Escape'){ 
+    e.preventDefault(); 
+    clearSearch(); 
+  }
+}
+    });
+
+clearSearchBtn.addEventListener('click', clearSearch);
+updateNavButtons();
+
+    // 初始渲染
+    updateGutter();
+    updateCursorInfo();
+    renderPreview();
+  </script>
+</body>
+</html>
