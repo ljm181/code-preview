@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>程式碼編輯工具v1.1.2</title>
+  <title>程式碼編輯工具v1.2</title>
   <style>
     :root{
       --bg:#0f172a;         /* slate-900 */
@@ -71,6 +71,13 @@
   pointer-events:auto;
 }
        
+
+/* 隱藏 type=search 的瀏覽器原生清除鈕，避免與自訂 × 重複 */
+.toolbar .search-wrap input::-webkit-search-cancel-button{
+  -webkit-appearance:none;
+  appearance:none;
+}
+
     .toolbar button, .toolbar label{
       background:var(--btn); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:8px; cursor:pointer;
     }
@@ -89,11 +96,14 @@
     .editor-wrap{flex:1; position:relative; display:flex; min-height:0}
     .gutter{
       width:48px; background:#0b1220; color:var(--muted); text-align:right; padding:8px 6px; overflow:hidden auto; border-right:1px solid var(--border);
-      user-select:none; white-space:pre; line-height:1.4;
+      user-select:none; white-space:pre; line-height:1.4; font-family:inherit; font-size:14px;
     }
     textarea{
       flex:1; border:0; outline:0; resize:none; background:#0b1220; color:var(--text); padding:8px 10px; line-height:1.4; font-family:inherit; font-size:14px;
       overflow:auto;
+      white-space:pre;
+      tab-size:4;
+      -moz-tab-size:4;
     }
 
 .gutter {
@@ -169,11 +179,33 @@
   font-size:12px;
 }
 
+  
+
+/* === v1.2 搜尋標記對比度強化（不影響預覽邏輯） === */
+#editor::selection{
+  background:#facc15;
+  color:#111827;
+}
+#editor::-moz-selection{
+  background:#facc15;
+  color:#111827;
+}
+.toolbar .search-wrap.search-found input{
+  border-color:#facc15;
+  box-shadow:0 0 0 1px rgba(250,204,21,.22);
+}
+.toolbar .search-wrap.search-not-found input{
+  border-color:#f87171;
+  box-shadow:0 0 0 1px rgba(248,113,113,.22);
+}
+.toolbar .count.search-found{ color:#fde047; font-weight:700; }
+.toolbar .count.search-not-found{ color:#fca5a5; font-weight:700; }
+
   </style>
 </head>
 <body>
   <header>
-    <span class="title">程式碼編輯工具v1.1.2</span>
+    <span class="title">程式碼編輯工具v1.2</span>
     <span class="spacer"></span>
     <div class="toolbar">
       <label title="自動更新預覽">
@@ -196,14 +228,14 @@
   <h3>程式碼
 <span id="currentFile" class="file-chip" title="未載入檔案">未載入檔案</span>    
 <span class="heading-actions">
-      <button id="loadHtmlBtn" title="載入本機 HTML">載入</button>
+      <button id="loadHtmlBtn" title="載入本機 HTML / TXT">載入</button>
       <button id="copyCodeBtn" title="複製全部">複製</button>
       <button id="clearCodeBtn" title="清除全部">清除</button>
       <button id="exportCodeBtn" title="匯出為 HTML">匯出</button>
     </span>
   </h3>
-<!-- 隱藏的檔案選擇器（接受 .html / .htm）-->
-<input id="filePicker" type="file" accept=".html,.htm,text/html" style="display:none">
+<!-- 隱藏的檔案選擇器（接受 .html / .htm / .txt）-->
+<input id="filePicker" type="file" accept=".html,.htm,.txt,text/html,text/plain" style="display:none">
 
 <div class="editor-wrap">
   <div id="gutter" class="gutter"></div>
@@ -224,10 +256,10 @@
       <button id="collapsePreviewBtn" title="收合/展開預覽">收合</button>
     </span>
   </h3>
-  <iframe id="preview" sandbox="allow-scripts allow-same-origin"></iframe>
+  <iframe id="preview" sandbox="allow-scripts"></iframe>
       <div class="statusbar">
         <span class="badge">沙箱啟用</span>
-        <span class="badge">同源隔離</span>
+        <span class="badge">同源限制</span>
         <span class="badge">安全預覽</span>
       </div>
     </section>
@@ -303,12 +335,24 @@ const filePicker   = document.getElementById('filePicker');
     function updateCursorInfo(){
       const pos = editor.selectionStart;
       const content = editor.value;
-      let line = 1, col = 1;
-      for(let i=0;i<pos;i++){
-        if(content[i]==='\n'){ line++; col=1; } else { col++; }
+      const before = content.slice(0, pos);
+      const lines = before.split('\n');
+      const line = lines.length;
+      const currentLineText = lines[lines.length - 1] || '';
+
+      // 依 tab-size:4 計算「視覺欄位」，讓 .txt 內含 Tab 時欄位顯示更符合畫面
+      const TAB_SIZE = 4;
+      let visualCol = 1;
+      for (const ch of currentLineText) {
+        if (ch === '\t') {
+          visualCol += TAB_SIZE - ((visualCol - 1) % TAB_SIZE);
+        } else {
+          visualCol++;
+        }
       }
+
       curLineEl.textContent = line;
-      curColEl.textContent = col;
+      curColEl.textContent = visualCol;
       charCountEl.textContent = content.length;
     }
 
@@ -318,7 +362,7 @@ const filePicker   = document.getElementById('filePicker');
     // --- 自動刷新（debounce） ---
     let debounceTimer = null;
     function requestPreview(){
-      if(!autoRefresh.checked) return;
+      if(!autoRefresh.checked || previewCollapsed) return; // 收起時暫緩自動刷新；展開或按執行時會立即渲染
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(renderPreview, 250);
     }
@@ -326,34 +370,29 @@ const filePicker   = document.getElementById('filePicker');
     // --- 安全預覽：使用 iframe.srcdoc + sandbox(allow-scripts) ---
     function renderPreview(){
       const code = editor.value;
-      // 內嵌 Content-Security-Policy：阻擋外部資源載入（最小安全守則）
-      const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">`;
-      const html = code.replace(/<head>/i, `<head>${csp}`);
+      // 阻擋外部資源載入；若原始碼沒有 <head>，就建立一個 head。
+      const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:;">`;
+      let html;
+      if (/<head(?:\s[^>]*)?>/i.test(code)) {
+        html = code.replace(/<head(?:\s[^>]*)?>/i, match => `${match}${csp}`);
+      } else if (/<html(?:\s[^>]*)?>/i.test(code)) {
+        html = code.replace(/<html(?:\s[^>]*)?>/i, match => `${match}<head>${csp}</head>`);
+      } else {
+        html = `<head>${csp}</head>${code}`;
+      }
       iframe.srcdoc = html;
     }
+
 function openPreviewInNewTab() {
-  const iframe = document.getElementById('preview');
-  if (!iframe) {
-    alert('找不到預覽畫面 (iframe#preview)');
-    return;
-  }
-
-  const doc = iframe.contentDocument || iframe.contentWindow.document;
-  if (!doc) {
-    alert('無法讀取預覽內容');
-    return;
-  }
-
-  const html = '<!doctype html>\n' + doc.documentElement.outerHTML;
-
-  const newWin = window.open('', '_blank');
+  const blob = new Blob([editor.value], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const newWin = window.open(url, '_blank');
   if (!newWin) {
+    URL.revokeObjectURL(url);
     alert('瀏覽器阻擋了彈出視窗，請允許本頁開啟新分頁。');
     return;
   }
-  newWin.document.open();
-  newWin.document.write(html);
-  newWin.document.close();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
     // --- 搜尋功能（下一個/上一個） ---
@@ -361,10 +400,26 @@ function openPreviewInNewTab() {
     let matches = [];
     let idx = -1;
 
+
+    function updateSearchVisualState(q){
+      const wrap = findInput.parentElement;
+      const hasQuery = !!q;
+      const hasMatches = hasQuery && matches.length > 0;
+      wrap?.classList.toggle('search-found', hasMatches);
+      wrap?.classList.toggle('search-not-found', hasQuery && !hasMatches);
+      matchCount.classList.toggle('search-found', hasMatches);
+      matchCount.classList.toggle('search-not-found', hasQuery && !hasMatches);
+    }
+
     function computeMatches(q){
       matches = [];
       idx = -1;
-      if(!q) { matchCount.textContent = '0 / 0'; return; }
+      if(!q) {
+        matchCount.textContent = '0 / 0';
+        updateNavButtons();
+        updateSearchVisualState(q);
+        return;
+      }
       const text = editor.value;
       let start = 0;
       while(true){
@@ -373,8 +428,9 @@ function openPreviewInNewTab() {
         matches.push([i, i+q.length]);
         start = i + q.length;
       }
-      matchCount.textContent = matches.length ? `1 / ${matches.length}` : `0 / 0`;
-      updateNavButtons();                  // ← 新增
+      matchCount.textContent = matches.length ? `0 / ${matches.length}` : `0 / 0`;
+      updateNavButtons();
+      updateSearchVisualState(q);
     }
 
     function jump(to){
@@ -422,13 +478,29 @@ function clearSearch(){
 
   // UI：移除 has-value 樣式
   findInput.parentElement?.classList.remove('has-value');
+  updateSearchVisualState('');
 }
 
 
     // --- 事件繫結 ---
-    editor.addEventListener('input', ()=>{ updateGutter(); updateCursorInfo(); requestPreview(); });
+    editor.addEventListener('input', ()=>{
+      updateGutter();
+      updateCursorInfo();
+      if (findInput.value) computeMatches(findInput.value);
+      requestPreview();
+    });
     editor.addEventListener('keyup', updateCursorInfo);
-    runBtn.addEventListener('click', renderPreview);
+    function runAndShowPreview(){
+      // 「執行」代表使用者要看結果：若預覽收起，先展開；展開時 applyPreviewState() 會立即渲染。
+      if (previewCollapsed) {
+        previewCollapsed = false;
+        applyPreviewState();
+      } else {
+        renderPreview();
+      }
+    }
+
+    runBtn.addEventListener('click', runAndShowPreview);
 
 // === 工具列：新分頁預覽（你已經有了，可保留） ===
 document.getElementById('openTabBtn').addEventListener('click', openPreviewInNewTab);
@@ -448,7 +520,7 @@ document.getElementById('clearCodeBtn').addEventListener('click', () => {
     renderPreview();
 // ★ 重點：清空後把檔名 chip 恢復為「未命名」，並重設視窗標題（可選）
     setCurrentFile('未命名');                 // ← 這行會把 <span id="currentFile"> 顯示成「未命名」
-    document.title = '程式碼編輯工具v1.1.2';   // ← 可選：把分頁標題也重設
+    document.title = '程式碼編輯工具v1.2';   // ← 可選：把分頁標題也重設
   }
 });
 
@@ -462,7 +534,7 @@ a.download = `code-${ts}.html`;
   URL.revokeObjectURL(a.href);
 });
 
-// === 標題「程式碼」右側：載入本機 HTML ===
+// === 標題「程式碼」右側：載入本機 HTML / TXT ===
 if (loadHtmlBtn && filePicker) {
   loadHtmlBtn.addEventListener('click', () => {
     filePicker.value = ''; // 讓同一檔案可重選也會觸發 change
@@ -473,83 +545,67 @@ if (loadHtmlBtn && filePicker) {
     const file = filePicker.files && filePicker.files[0];
     if (!file) return;
 
-    // 覆寫提醒（避免誤覆蓋 demo 或現有內容）
     const hasContent = editor.value.trim().length > 0 && editor.value !== demo;
-    if (hasContent && !confirm(`要以「${file.name}」內容覆蓋目前編輯區嗎？`)) {
-      return;
-    }
+    if (hasContent && !confirm(`要以「${file.name}」內容覆蓋目前編輯區嗎？`)) return;
 
     const reader = new FileReader();
     reader.onload = () => {
-      editor.value = reader.result || '';
+      // 統一 Windows / macOS / Linux 換行，避免 .txt 匯入後行號與游標列數異常。
+      const normalized = String(reader.result || '').replace(/\r\n?/g, '\n');
+      editor.value = normalized;
+      editor.scrollTop = 0;
+      editor.scrollLeft = 0;
+      gutter.scrollTop = 0;
       updateGutter();
       updateCursorInfo();
+      if (findInput.value) computeMatches(findInput.value);
+      setCurrentFile(file.name);
+      document.title = `程式碼編輯工具v1.2 - ${file.name}`;
       renderPreview();
-      // 更新視窗標題顯示目前檔名（可選）
-      document.title = `程式碼編輯工具v1.0 - ${file.name}`;
-
-reader.onload = () => {
-  editor.value = reader.result || '';
-  updateGutter();
-  updateCursorInfo();
-  renderPreview();
-
-  // 更新標題與檔名 chip
-  setCurrentFile(file.name);
-  document.title = `程式碼編輯工具v1.1.2 - ${file.name}`;
-};
-
     };
-    reader.onerror = () => {
-      alert('讀取檔案失敗，請再試一次。');
-    };
+    reader.onerror = () => alert('讀取檔案失敗，請再試一次。');
     reader.readAsText(file, 'utf-8');
   });
 }
 
-// === 標題「預覽」右側：收合/展開（只隱藏內容，保留標題列） ===
-let previewCollapsed = false;
-document.getElementById('collapsePreviewBtn').addEventListener('click', () => {
+// === 標題「預覽」右側：收合/展開（預設收起） ===
+let previewCollapsed = true;
+const collapsePreviewBtn = document.getElementById('collapsePreviewBtn');
+
+function applyPreviewState(){
   const editorContainer = document.getElementById('editorContainer');
   const previewContainer = document.getElementById('previewContainer');
-  const iframeEl = document.getElementById('preview');
   const statusbar = previewContainer.querySelector('.statusbar');
-  const btn = document.getElementById('collapsePreviewBtn');
-
-  previewCollapsed = !previewCollapsed;
 
   if (previewCollapsed) {
-    // 隱藏內容
-    iframeEl.style.display = 'none';
+    iframe.style.display = 'none';
     if (statusbar) statusbar.style.display = 'none';
-
-    // 左欄吃滿
     editorContainer.style.width = '100%';
-
-    // 右欄保持僅標題列
     previewContainer.style.flex = '0 0 auto';
     previewContainer.style.width = 'auto';
-
-    // 按鈕文案
-    btn.textContent = '展開';
-    btn.title = '展開預覽視窗';
+    collapsePreviewBtn.textContent = '展開';
+    collapsePreviewBtn.title = '展開預覽視窗';
   } else {
-    // 顯示內容
-    iframeEl.style.display = '';
+    iframe.style.display = '';
     if (statusbar) statusbar.style.display = '';
-
-    // 回到 1:1 佈局
-    editorContainer.style.width = '50%';
+    editorContainer.style.width = '';
     previewContainer.style.flex = '';
     previewContainer.style.width = '';
-
-    // 按鈕文案
-    btn.textContent = '收合';
-    btn.title = '收合預覽視窗';
+    collapsePreviewBtn.textContent = '收合';
+    collapsePreviewBtn.title = '收合預覽視窗';
+    renderPreview(); // 展開時才確保預覽是最新內容
   }
+}
+
+collapsePreviewBtn.addEventListener('click', () => {
+  previewCollapsed = !previewCollapsed;
+  applyPreviewState();
 });
 
-    autoRefresh.addEventListener('change', ()=>{ autoState.textContent = autoRefresh.checked ? 'ON' : 'OFF'; if(autoRefresh.checked) renderPreview(); });
+    autoRefresh.addEventListener('change', ()=>{
+      autoState.textContent = autoRefresh.checked ? 'ON' : 'OFF';
+      if(autoRefresh.checked && !previewCollapsed) renderPreview();
+    });
 
     findInput.addEventListener('input', ()=>{
       const q = findInput.value;
@@ -564,7 +620,20 @@ document.getElementById('collapsePreviewBtn').addEventListener('click', () => {
     // 快捷鍵：Ctrl/Cmd+Enter 執行、Ctrl/Cmd+F 聚焦搜尋、Enter/Shift+Enter 遍歷結果
     window.addEventListener('keydown', (e)=>{
       const meta = e.ctrlKey || e.metaKey;
-      if(meta && e.key === 'Enter'){ e.preventDefault(); renderPreview(); }
+
+// 全域快捷鍵：Ctrl/Cmd + Shift + Enter → 新分頁預覽
+if (meta && e.shiftKey && e.key === 'Enter') {
+  e.preventDefault();
+  openPreviewInNewTab();
+  return;
+}
+
+// Ctrl/Cmd + Enter → 執行；若預覽收起則自動展開
+if (meta && !e.shiftKey && e.key === 'Enter') {
+  e.preventDefault();
+  runAndShowPreview();
+  return;
+}
 
 // Ctrl/Cmd + O → 開啟載入檔案
 if (meta && e.key.toLowerCase() === 'o') {
@@ -573,12 +642,6 @@ if (meta && e.key.toLowerCase() === 'o') {
     filePicker.value = '';
     filePicker.click();
   }
-}
-
-// 全域快捷鍵：Ctrl/Cmd + Shift + Enter → 新分頁預覽
-if (meta && e.shiftKey && e.key === 'Enter') {
-  e.preventDefault();
-  openPreviewInNewTab();
 }
       if(meta && (e.key.toLowerCase() === 'f')){ e.preventDefault(); findInput.focus(); findInput.select(); }
       if(document.activeElement === findInput){
@@ -596,10 +659,10 @@ if (meta && e.shiftKey && e.key === 'Enter') {
 clearSearchBtn.addEventListener('click', clearSearch);
 updateNavButtons();
 
-    // 初始渲染
+    // 初始狀態：預覽預設收起；需要展開時再渲染
     updateGutter();
     updateCursorInfo();
-    renderPreview();
+    applyPreviewState();
   </script>
 </body>
 </html>
